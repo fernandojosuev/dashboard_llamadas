@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard de Llamadas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #fff;
+      padding: 20px;
+    }
+
+    h1 {
+      text-align: center;
+    }
+
+    .card {
+      background: #1e1e1e;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 10px;
+    }
+
+    .whatsapp {
+      border-left: 5px solid #25D366;
+    }
+
+    .phone {
+      border-left: 5px solid #2196F3;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>📞 Dashboard de Llamadas</h1>
+
+<div id="calls"></div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "TU_API_KEY",
+    authDomain: "monitoreoapp-1e73e.firebaseapp.com",
+    databaseURL: "https://monitoreoapp-1e73e-default-rtdb.firebaseio.com",
+    projectId: "monitoreoapp-1e73e",
+    storageBucket: "monitoreoapp-1e73e.firebasestorage.app"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  const container = document.getElementById("calls");
+
+  function renderCall(call) {
+    const div = document.createElement("div");
+    div.className = "card " + (call.source === "WHATSAPP" ? "whatsapp" : "phone");
+
+    div.innerHTML = `
+      <b>${call.source || "N/A"}</b><br>
+      Trabajador: ${call.workerName || "N/A"}<br>
+      Número: ${call.phoneNumber || "N/A"}<br>
+      Estado: ${call.status || "N/A"}<br>
+      Evento: ${call.event || "N/A"}<br>
+      Duración: ${call.durationSec || 0}s<br>
+      Fecha: ${call.startIso || ""}
+    `;
+
+    return div;
+  }
+
+  onValue(ref(db, "call_reports"), (snapshot) => {
+    container.innerHTML = "";
+
+    const data = snapshot.val();
+
+    if (!data) {
+      container.innerHTML = "<p>No hay datos aún...</p>";
+      return;
+    }
+
+    for (let worker in data) {
+      const calls = data[worker] || {};
+
+      for (let id in calls) {
+        const call = calls[id];
+
+        if (call.event && call.event.includes("END")) {
+          container.appendChild(renderCall(call));
+        }
+      }
+    }
+
+    if (container.innerHTML.trim() === "") {
+      container.innerHTML = "<p>Hay datos, pero no hay eventos END todavía.</p>";
+    }
+  });
+</script>
+
+</body>
+</html>
