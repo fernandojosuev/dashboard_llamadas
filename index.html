@@ -17,19 +17,88 @@
       text-align: center;
     }
 
-    .card {
+    .worker-card {
       background: #1e1e1e;
+      margin: 15px 0;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #333;
+    }
+
+    .worker-header {
       padding: 15px;
-      margin: 10px 0;
-      border-radius: 10px;
+      cursor: pointer;
+      background: #252525;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .worker-header:hover {
+      background: #303030;
+    }
+
+    .metrics {
+      padding: 15px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      background: #151515;
+      padding: 10px;
+      border-radius: 8px;
+    }
+
+    .good {
+      color: #25D366;
+    }
+
+    .warning {
+      color: #ffcc00;
+    }
+
+    .danger {
+      color: #ff5252;
+    }
+
+    .details {
+      display: none;
+      padding: 15px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      border-bottom: 1px solid #333;
+      padding: 8px;
+      text-align: left;
+    }
+
+    th {
+      background: #181818;
     }
 
     .whatsapp {
-      border-left: 5px solid #25D366;
+      color: #25D366;
+      font-weight: bold;
     }
 
     .phone {
-      border-left: 5px solid #2196F3;
+      color: #2196F3;
+      font-weight: bold;
+    }
+
+    .note {
+      padding: 12px 15px;
+      background: #151515;
+      border-top: 1px solid #333;
+      line-height: 1.5;
     }
   </style>
 </head>
@@ -38,7 +107,7 @@
 
 <h1>📞 Dashboard de Llamadas</h1>
 
-<div id="calls"></div>
+<div id="workers"></div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -55,24 +124,201 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  const container = document.getElementById("calls");
+  const container = document.getElementById("workers");
 
-  function renderCall(call) {
-    const div = document.createElement("div");
-    div.className = "card " + (call.source === "WHATSAPP" ? "whatsapp" : "phone");
+  function correctedDuration(call) {
+    const raw = Number(call.durationSec || 0);
 
-    div.innerHTML = `
-      <b>${call.source || "N/A"}</b><br>
-      Trabajador: ${call.workerName || "N/A"}<br>
-      Número: ${call.phoneNumber || "N/A"}<br>
-      Estado: ${call.status || "N/A"}<br>
-      Evento: ${call.event || "N/A"}<br>
-      Duración: ${call.durationSec || 0}s<br>
-      Fecha: ${call.startIso || ""}
+    if (call.source === "PHONE" || call.source === "NORMAL_PHONE" || call.source === "TELEFONO") {
+      return Math.max(0, raw - 2);
+    }
+
+    return raw;
+  }
+
+  function connectedDuration(call) {
+    return Number(call.connectedDurationSec || 0);
+  }
+
+  function isAnswered(call) {
+    return (
+      call.status === "ANSWERED_OR_CONNECTED" ||
+      call.phase === "CONNECTED" ||
+      connectedDuration(call) > 0
+    );
+  }
+
+  function contactDisplay(call) {
+    return call.contactName || call.phoneNumber || call.number || "Sin contacto";
+  }
+
+  function numberDisplay(call) {
+    return call.phoneNumber || call.number || "Sin número";
+  }
+
+  function formatTime(iso) {
+    if (!iso) return "";
+    return iso;
+  }
+
+  function analyzeWorker(calls) {
+    const total = calls.length;
+    const answered = calls.filter(isAnswered).length;
+    const notAnswered = total - answered;
+
+    const totalDuration = calls.reduce((sum, c) => sum + correctedDuration(c), 0);
+    const totalConnected = calls.reduce((sum, c) => sum + connectedDuration(c), 0);
+
+    const answerRate = total > 0 ? Math.round((answered / total) * 100) : 0;
+    const fakeOrWeakRate = total > 0 ? Math.round((notAnswered / total) * 100) : 0;
+
+    const shortAnswered = calls.filter(c => isAnswered(c) && connectedDuration(c) > 0 && connectedDuration(c) < 15).length;
+
+    const repeatedMap = {};
+    calls.forEach(c => {
+      const key = contactDisplay(c);
+      repeatedMap[key] = (repeatedMap[key] || 0) + 1;
+    });
+
+    const repeatedContacts = Object.entries(repeatedMap)
+      .filter(([_, count]) => count >= 3)
+      .map(([name, count]) => `${name} (${count})`);
+
+    let quality = "Normal";
+    let qualityClass = "warning";
+    let notes = [];
+
+    if (total === 0) {
+      quality = "Sin actividad";
+      qualityClass = "danger";
+      notes.push("No hay llamadas registradas.");
+    } else {
+      if (answerRate >= 50 && totalConnected >= 120) {
+        quality = "Buena actividad";
+        qualityClass = "good";
+        notes.push("Tiene buena proporción de llamadas contestadas y tiempo real hablado.");
+      }
+
+      if (fakeOrWeakRate >= 70 && total >= 5) {
+        quality = "Sospechoso";
+        qualityClass = "danger";
+        notes.push("Muchas llamadas fueron solo timbradas o no contestadas.");
+      }
+
+      if (shortAnswered >= 3) {
+        notes.push("Varias llamadas contestadas duraron menos de 15 segundos. Revisar calidad del contacto.");
+      }
+
+      if (repeatedContacts.length > 0) {
+        notes.push("Contactos repetidos muchas veces: " + repeatedContacts.join(", ") + ".");
+      }
+
+      if (totalConnected === 0 && total >= 5) {
+        quality = "Actividad débil";
+        qualityClass = "danger";
+        notes.push("No hay tiempo real hablado pese a varias llamadas.");
+      }
+
+      if (notes.length === 0) {
+        notes.push("Actividad sin alertas graves por ahora.");
+      }
+    }
+
+    return {
+      total,
+      answered,
+      notAnswered,
+      totalDuration,
+      totalConnected,
+      answerRate,
+      fakeOrWeakRate,
+      shortAnswered,
+      quality,
+      qualityClass,
+      notes
+    };
+  }
+
+  function renderWorker(workerName, calls) {
+    calls.sort((a, b) => (b.startMillis || 0) - (a.startMillis || 0));
+
+    const metrics = analyzeWorker(calls);
+
+    const card = document.createElement("div");
+    card.className = "worker-card";
+
+    const detailsId = "details-" + workerName.replace(/\W/g, "-");
+
+    card.innerHTML = `
+      <div class="worker-header" onclick="toggleDetails('${detailsId}')">
+        <div>
+          <b>👤 ${workerName}</b><br>
+          <span class="${metrics.qualityClass}">${metrics.quality}</span>
+        </div>
+        <div>Ver llamadas ▼</div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">Total llamadas<br><b>${metrics.total}</b></div>
+        <div class="metric good">Contestadas<br><b>${metrics.answered}</b></div>
+        <div class="metric danger">No contestadas<br><b>${metrics.notAnswered}</b></div>
+        <div class="metric">Efectividad<br><b>${metrics.answerRate}%</b></div>
+        <div class="metric warning">Solo timbradas<br><b>${metrics.fakeOrWeakRate}%</b></div>
+        <div class="metric">Tiempo total<br><b>${metrics.totalDuration}s</b></div>
+        <div class="metric good">Tiempo hablado<br><b>${metrics.totalConnected}s</b></div>
+      </div>
+
+      <div class="note">
+        <b>Notas:</b><br>
+        ${metrics.notes.map(n => "• " + n).join("<br>")}
+      </div>
+
+      <div class="details" id="${detailsId}">
+        <table>
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Fuente</th>
+              <th>Contacto</th>
+              <th>Número</th>
+              <th>Resultado</th>
+              <th>Total</th>
+              <th>Hablado</th>
+              <th>Dirección</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${calls.map(call => {
+              const answered = isAnswered(call);
+              const sourceClass = call.source === "WHATSAPP" ? "whatsapp" : "phone";
+
+              return `
+                <tr>
+                  <td>${formatTime(call.startIso)}</td>
+                  <td class="${sourceClass}">${call.source || "N/A"}</td>
+                  <td>${contactDisplay(call)}</td>
+                  <td>${numberDisplay(call)}</td>
+                  <td class="${answered ? "good" : "danger"}">
+                    ${answered ? "Contestada" : "No contestada"}
+                  </td>
+                  <td>${correctedDuration(call)}s</td>
+                  <td>${connectedDuration(call)}s</td>
+                  <td>${call.direction || "N/A"}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
 
-    return div;
+    return card;
   }
+
+  window.toggleDetails = function(id) {
+    const el = document.getElementById(id);
+    el.style.display = el.style.display === "block" ? "none" : "block";
+  };
 
   onValue(ref(db, "call_reports"), (snapshot) => {
     container.innerHTML = "";
@@ -85,14 +331,19 @@
     }
 
     for (let worker in data) {
-      const calls = data[worker] || {};
+      const workerData = data[worker] || {};
+      const calls = [];
 
-      for (let id in calls) {
-        const call = calls[id];
+      for (let id in workerData) {
+        const call = workerData[id];
 
         if (call.event && call.event.includes("END")) {
-          container.appendChild(renderCall(call));
+          calls.push(call);
         }
+      }
+
+      if (calls.length > 0) {
+        container.appendChild(renderWorker(worker, calls));
       }
     }
 
